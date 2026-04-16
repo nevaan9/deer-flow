@@ -16,9 +16,7 @@ def test_get_skills_root_path_points_to_project_root_skills():
     """get_skills_root_path() should point to deer-flow/skills (sibling of backend/), not backend/packages/skills."""
     path = get_skills_root_path()
     assert path.name == "skills", f"Expected 'skills', got '{path.name}'"
-    assert (path.parent / "backend").is_dir(), (
-        f"Expected skills path's parent to be project root containing 'backend/', but got {path}"
-    )
+    assert (path.parent / "backend").is_dir(), f"Expected skills path's parent to be project root containing 'backend/', but got {path}"
 
 
 def test_load_skills_discovers_nested_skills_and_sets_container_paths(tmp_path: Path):
@@ -64,3 +62,15 @@ def test_load_skills_skips_hidden_directories(tmp_path: Path):
 
     assert "ok-skill" in names
     assert "secret-skill" not in names
+
+
+def test_load_skills_prefers_custom_over_public_with_same_name(tmp_path: Path):
+    skills_root = tmp_path / "skills"
+    _write_skill(skills_root / "public" / "shared-skill", "shared-skill", "Public version")
+    _write_skill(skills_root / "custom" / "shared-skill", "shared-skill", "Custom version")
+
+    skills = load_skills(skills_path=skills_root, use_config=False, enabled_only=False)
+    shared = next(skill for skill in skills if skill.name == "shared-skill")
+
+    assert shared.category == "custom"
+    assert shared.description == "Custom version"

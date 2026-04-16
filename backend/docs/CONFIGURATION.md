@@ -136,6 +136,36 @@ models:
           type: enabled
 ```
 
+**Gemini with thinking via OpenAI-compatible gateway**:
+
+When routing Gemini through an OpenAI-compatible proxy (Vertex AI OpenAI compat endpoint, AI Studio, or third-party gateways) with thinking enabled, the API attaches a `thought_signature` to each tool-call object returned in the response.  Every subsequent request that replays those assistant messages **must** echo those signatures back on the tool-call entries or the API returns:
+
+```
+HTTP 400 INVALID_ARGUMENT: function call `<tool>` in the N. content block is
+missing a `thought_signature`.
+```
+
+Standard `langchain_openai:ChatOpenAI` silently drops `thought_signature` when serialising messages.  Use `deerflow.models.patched_openai:PatchedChatOpenAI` instead — it re-injects the tool-call signatures (sourced from `AIMessage.additional_kwargs["tool_calls"]`) into every outgoing payload:
+
+```yaml
+models:
+  - name: gemini-2.5-pro-thinking
+    display_name: Gemini 2.5 Pro (Thinking)
+    use: deerflow.models.patched_openai:PatchedChatOpenAI
+    model: google/gemini-2.5-pro-preview   # model name as expected by your gateway
+    api_key: $GEMINI_API_KEY
+    base_url: https://<your-openai-compat-gateway>/v1
+    max_tokens: 16384
+    supports_thinking: true
+    supports_vision: true
+    when_thinking_enabled:
+      extra_body:
+        thinking:
+          type: enabled
+```
+
+For Gemini accessed **without** thinking (e.g. via OpenRouter where thinking is not activated), the plain `langchain_openai:ChatOpenAI` with `supports_thinking: false` is sufficient and no patch is needed.
+
 ### Tool Groups
 
 Organize tools into logical groups:
@@ -162,8 +192,8 @@ tools:
 ```
 
 **Built-in Tools**:
-- `web_search` - Search the web (Tavily)
-- `web_fetch` - Fetch web pages (Jina AI)
+- `web_search` - Search the web (DuckDuckGo, Tavily, Exa, InfoQuest, Firecrawl)
+- `web_fetch` - Fetch web pages (Jina AI, Exa, InfoQuest, Firecrawl)
 - `ls` - List directory contents
 - `read_file` - Read file contents
 - `write_file` - Write file contents
@@ -178,6 +208,7 @@ DeerFlow supports multiple sandbox execution modes. Configure your preferred mod
 ```yaml
 sandbox:
    use: deerflow.sandbox.local:LocalSandboxProvider # Local execution
+   allow_host_bash: false # default; host bash is disabled unless explicitly re-enabled
 ```
 
 **Docker Execution** (runs sandbox code in isolated Docker containers):
@@ -198,7 +229,7 @@ sandbox:
 
 When using Docker development (`make docker-start`), DeerFlow starts the `provisioner` service only if this provisioner mode is configured. In local or plain Docker sandbox modes, `provisioner` is skipped.
 
-See [Provisioner Setup Guide](docker/provisioner/README.md) for detailed configuration, prerequisites, and troubleshooting.
+See [Provisioner Setup Guide](../../docker/provisioner/README.md) for detailed configuration, prerequisites, and troubleshooting.
 
 Choose between local execution or Docker-based isolation:
 
@@ -206,7 +237,10 @@ Choose between local execution or Docker-based isolation:
 ```yaml
 sandbox:
   use: deerflow.sandbox.local:LocalSandboxProvider
+  allow_host_bash: false
 ```
+
+`allow_host_bash` is intentionally `false` by default. DeerFlow's local sandbox is a host-side convenience mode, not a secure shell isolation boundary. If you need `bash`, prefer `AioSandboxProvider`. Only set `allow_host_bash: true` for fully trusted single-user local workflows.
 
 **Option 2: Docker Sandbox** (isolated, more secure):
 ```yaml
@@ -222,6 +256,8 @@ sandbox:
       container_path: /path/in/container
       read_only: false
 ```
+
+When you configure `sandbox.mounts`, DeerFlow exposes those `container_path` values in the agent prompt so the agent can discover and operate on mounted directories directly instead of assuming everything must live under `/mnt/user-data`.
 
 ### Skills
 
@@ -242,6 +278,12 @@ skills:
 - Skills are automatically discovered and loaded
 - Available in both local and Docker sandbox via path mapping
 
+**Per-Agent Skill Filtering**:
+Custom agents can restrict which skills they load by defining a `skills` field in their `config.yaml` (located at `workspace/agents/<agent_name>/config.yaml`):
+- **Omitted or `null`**: Loads all globally enabled skills (default fallback).
+- **`[]` (empty list)**: Disables all skills for this specific agent.
+- **`["skill-name"]`**: Loads only the explicitly specified skills.
+
 ### Title Generation
 
 Automatic conversation title generation:
@@ -253,6 +295,14 @@ title:
   max_chars: 60
   model_name: null  # Use first model in list
 ```
+
+### GitHub API Token (Optional for GitHub Deep Research Skill)
+
+The default GitHub API rate limits are quite restrictive. For frequent project research, we recommend configuring a personal access token (PAT) with read-only permissions.
+
+**Configuration Steps**:
+1. Uncomment the `GITHUB_TOKEN` line in the `.env` file and add your personal access token
+2. Restart the DeerFlow service to apply changes
 
 ## Environment Variables
 
